@@ -15,6 +15,10 @@ import pandas as pd
 import requests
 import folium
 from streamlit_folium import st_folium
+import time
+import os
+import json
+from pathlib import Path
 
 # =============================
 # UI / PAGE
@@ -217,14 +221,88 @@ MICRO_HUBS = [
 # =============================
 @st.cache_data(show_spinner=False)
 def geocode_address(addr: str) -> Optional[Tuple[float, float]]:
+    # Simple on-disk cache to avoid repeated Nominatim calls across app restarts
+    cache_file = Path(__file__).parent / "geocode_cache.json"
     try:
-        url = "https://nominatim.openstreetmap.org/search"
-        params = {"q": addr, "format": "json", "limit": 1}
-        headers = {"User-Agent": "SquareMiles-Streamlit/1.0 (contact: demo@example.com)"}
-        r = requests.get(url, params=params, headers=headers, timeout=12)
-        if r.ok and len(r.json()) > 0:
-            j = r.json()[0]
-            return float(j["lat"]), float(j["lon"])
+        if cache_file.exists():
+            with cache_file.open("r", encoding="utf-8") as fh:
+                _cache = json.load(fh)
+        else:
+            _cache = {}
+    except Exception:
+        _cache = {}
+
+    key = addr.strip()
+    if not key:
+        return None
+
+    # Return cached value if present (including explicit nulls)
+    if key in _cache:
+        val = _cache[key]
+        if val is None:
+            return None
+        return (val[0], val[1])
+
+    url = "https://nominatim.openstreetmap.org/search"
+    email = os.environ.get("NOMINATIM_EMAIL", "demo@example.com")
+    params = {"q": key, "format": "json", "limit": 1, "addressdetails": 0}
+    headers = {"User-Agent": f"SquareMiles-Streamlit/1.0 (contact: {email})"}
+
+    # retries with exponential backoff for rate-limits / transient errors
+    for attempt in range(4):
+        try:
+            r = requests.get(url, params=params, headers=headers, timeout=12)
+        except requests.RequestException:
+            r = None
+
+        if r is None:
+            wait = 0.5 * (2 ** attempt)
+            time.sleep(wait)
+            continue
+
+        if r.status_code == 429:
+            # too many requests — backoff
+            wait = 1 + attempt * 2
+            time.sleep(wait)
+            continue
+
+        if r.ok:
+            try:
+                jlist = r.json()
+                if jlist:
+                    lat = float(jlist[0]["lat"])
+                    lon = float(jlist[0]["lon"])
+                    _cache[key] = [lat, lon]
+                    try:
+                        with cache_file.open("w", encoding="utf-8") as fh:
+                            json.dump(_cache, fh, ensure_ascii=False, indent=2)
+                    except Exception:
+                        pass
+                    return (lat, lon)
+                else:
+                    _cache[key] = None
+                    try:
+                        with cache_file.open("w", encoding="utf-8") as fh:
+                            json.dump(_cache, fh, ensure_ascii=False, indent=2)
+                    except Exception:
+                        pass
+                    return None
+            except Exception:
+                # malformed JSON — treat as transient
+                wait = 0.5 * (2 ** attempt)
+                time.sleep(wait)
+                continue
+        else:
+            # other HTTP errors — short wait then retry
+            wait = 0.5 * (2 ** attempt)
+            time.sleep(wait)
+            continue
+
+    # All retries exhausted: cache miss as None to avoid repeated attempts until manual cache clear
+    try:
+        _cache[key] = None
+        with cache_file.open("w", encoding="utf-8") as fh:
+            json.dump(_cache, fh, ensure_ascii=False, indent=2)
     except Exception:
         pass
     return None
