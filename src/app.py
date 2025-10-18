@@ -244,7 +244,14 @@ def geocode_address(addr: str) -> Optional[Tuple[float, float]]:
         return (val[0], val[1])
 
     url = "https://nominatim.openstreetmap.org/search"
-    email = os.environ.get("NOMINATIM_EMAIL", "demo@example.com")
+    # Prefer Streamlit secrets (for Streamlit Cloud), then environment variable, then fallback demo
+    email = "ot014@hdm-stuttgart.de"
+    try:
+        email = st.secrets.get("NOMINATIM_EMAIL") if hasattr(st, 'secrets') else None
+    except Exception:
+        email = None
+    if not email:
+        email = os.environ.get("NOMINATIM_EMAIL", "demo@example.com")
     params = {"q": key, "format": "json", "limit": 1, "addressdetails": 0}
     headers = {"User-Agent": f"SquareMiles-Streamlit/1.0 (contact: {email})"}
 
