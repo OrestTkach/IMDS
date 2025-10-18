@@ -15,6 +15,7 @@ import pandas as pd
 import requests
 import folium
 from streamlit_folium import st_folium
+import streamlit.components.v1 as components
 import time
 import os
 import json
@@ -568,10 +569,57 @@ def render_map(segments, origin, dest, city_obj, hub=None, title="Route", key=No
               "e_scooter_trailer":"#756bb1","autonomous_robot":"#9467bd","cargo_tram":"#ff9896",
               "cargo_bus":"#8c564b","boat":"#ff7f00"}
     for s in segments:
-        folium.PolyLine(s["geometry"], color=colors.get(s["mode"], "black"), weight=5,
-                        tooltip=f"{MODES[s['mode']]['label']} {s['distance_km']:.2f} km").add_to(m)
+        # Normalize geometry: ensure list of [lat(float), lon(float)] pairs
+        geom = s.get("geometry")
+        norm = []
+        try:
+            for p in geom:
+                # accept (lat,lon) tuples or [lat,lon]
+                if p is None:
+                    continue
+                if isinstance(p, (list, tuple)) and len(p) >= 2:
+                    try:
+                        lat = float(p[0])
+                        lon = float(p[1])
+                        norm.append([lat, lon])
+                    except Exception:
+                        continue
+            if not norm:
+                # fallback to start/end if available
+                if isinstance(geom, (list, tuple)) and len(geom) >= 2:
+                    try:
+                        a0 = float(geom[0][0]); b0 = float(geom[0][1])
+                        a1 = float(geom[-1][0]); b1 = float(geom[-1][1])
+                        norm = [[a0,b0],[a1,b1]]
+                    except Exception:
+                        norm = []
+        except Exception:
+            norm = []
+
+        if norm:
+            try:
+                folium.PolyLine(norm, color=colors.get(s["mode"], "black"), weight=5,
+                                tooltip=f"{MODES[s['mode']]['label']} {s['distance_km']:.2f} km").add_to(m)
+            except Exception:
+                # Log and skip problematic polyline
+                import logging
+                logging.exception("Failed to add PolyLine for segment")
     st.markdown(f"**{title}**")
-    st_folium(m, height=560, use_container_width=True, returned_objects=[], key=key or f"map_{title.replace(' ','_')}")
+    # Try the streamlit_folium component first (preferred). If marshalling fails
+    # (non-JSON-serialisable args), fall back to embedding the rendered HTML
+    # to avoid streamlit.components.v1.MarshallComponentException.
+    try:
+        st_folium(m, height=560, use_container_width=True, returned_objects=[], key=key or f"map_{title.replace(' ','_')}")
+    except Exception as exc:
+        # Log the exception for debugging (visible in Streamlit logs)
+        st.warning("Folium component marshalling failed; using HTML fallback. See logs for details.")
+        import logging
+        logging.exception("st_folium marshalling failed")
+        try:
+            map_html = m.get_root().render()
+            components.html(map_html, height=560)
+        except Exception:
+            st.error("Failed to render map via HTML fallback.")
 
 def totals_cards(title: str, totals: Dict):
     c1, c2, c3, c4 = st.columns(4)
