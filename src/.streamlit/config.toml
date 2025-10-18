@@ -1,0 +1,10 @@
+[server]
+headless = true
+address = "0.0.0.0"
+enableCORS = false
+enableXsrfProtection = false
+enableWebsocketCompression = false
+
+[browser]
+serverAddress = "gmis-475518.ue.r.appspot.com"
+serverPort = 443
