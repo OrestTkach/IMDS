@@ -686,4 +686,3 @@ else:
     st.info("Pick a **city**, enter a **start** (optional) and **destination** address, choose your **baseline chain**. "
             "Leave 'Route via micro-hub' **off** for direct routing; turn it **on** to use a selected or nearest micro-hub. "
             "Then click **Compute**.")
-
